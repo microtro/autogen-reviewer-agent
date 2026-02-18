@@ -18,7 +18,7 @@ GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 # For provider="openai": your OpenAI API key
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
-REVIEWER_MODEL: str = os.getenv("REVIEWER_MODEL", "gpt-4o")
+REVIEWER_MODEL: str = os.getenv("REVIEWER_MODEL", "gpt-5")
 MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
 SEVERITY_THRESHOLD: str = os.getenv("SEVERITY_THRESHOLD", "info")
 
