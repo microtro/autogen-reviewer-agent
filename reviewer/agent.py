@@ -7,7 +7,10 @@ linting/formatting output and produces a structured review.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import sys
+import threading
+import time
 from pathlib import Path
 
 from autogen_agentchat.agents import AssistantAgent
@@ -17,7 +20,6 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 from .config import (
     AZURE_API_KEY,
-    AZURE_API_VERSION,
     AZURE_ENDPOINT,
     GITHUB_MODELS_BASE_URL,
     GITHUB_TOKEN,
@@ -48,6 +50,61 @@ Your job is to produce a concise, actionable review covering:
 
 Keep the review concise. Do NOT repeat the diff verbatim.
 """
+
+_THINKING_MESSAGES = [
+    "Scanning diff for bugs",
+    "Checking variable names",
+    "Reviewing error handling",
+    "Inspecting control flow",
+    "Analyzing lint results",
+    "Looking for security issues",
+    "Evaluating code style",
+    "Pondering edge cases",
+    "Judging your commit message",
+    "Counting semicolons (just kidding)",
+    "Reading between the lines",
+    "Consulting the style guide",
+    "Cross-referencing best practices",
+    "Forming opinions",
+]
+
+
+class _Spinner:
+    """Animated terminal spinner with rotating status messages."""
+
+    def __init__(self) -> None:
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+        # Clear the spinner line
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
+
+    def _run(self) -> None:
+        frames = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        messages = itertools.cycle(_THINKING_MESSAGES)
+        current_msg = next(messages)
+        msg_timer = time.monotonic()
+
+        while not self._stop_event.is_set():
+            # Rotate message every 3 seconds
+            if time.monotonic() - msg_timer > 3.0:
+                current_msg = next(messages)
+                msg_timer = time.monotonic()
+
+            frame = next(frames)
+            line = f"\r  {frame}  {current_msg} ..."
+            sys.stdout.write(line.ljust(60))
+            sys.stdout.flush()
+            time.sleep(0.1)
 
 # GitHub Models per-model input token limits (free tier).
 # See https://docs.github.com/en/github-models
@@ -142,7 +199,7 @@ def _build_model_client() -> OpenAIChatCompletionClient:
             model=REVIEWER_MODEL,
             api_key=AZURE_API_KEY,
             base_url=f"{base}/openai/v1",
-            max_tokens=_effective_max_output_tokens(),
+            max_completion_tokens=_effective_max_output_tokens(),
             model_info={
                 "vision": False,
                 "function_calling": True,
@@ -205,7 +262,13 @@ async def run_review(repo_path: str) -> str:
     )
 
     user_message = _build_review_message(commit, lint_output, fmt_output)
-    result = await team.run(task=user_message)
+
+    spinner = _Spinner()
+    spinner.start()
+    try:
+        result = await team.run(task=user_message)
+    finally:
+        spinner.stop()
 
     # Extract the reviewer's last message
     review_text = ""
