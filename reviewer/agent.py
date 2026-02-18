@@ -16,6 +16,9 @@ from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 from .config import (
+    AZURE_API_KEY,
+    AZURE_API_VERSION,
+    AZURE_ENDPOINT,
     GITHUB_MODELS_BASE_URL,
     GITHUB_TOKEN,
     LLM_PROVIDER,
@@ -46,9 +49,45 @@ Your job is to produce a concise, actionable review covering:
 Keep the review concise. Do NOT repeat the diff verbatim.
 """
 
-# GitHub Models has a 16K token input limit.  1 token ~ 4 chars.
-# Reserve room for system prompt (~300 tokens) + response (MAX_TOKENS).
-_INPUT_CHAR_BUDGET = (16_000 - 500 - MAX_TOKENS) * 4  # ~46 000 chars
+# GitHub Models per-model input token limits (free tier).
+# See https://docs.github.com/en/github-models
+_MODEL_INPUT_LIMITS: dict[str, int] = {
+    "gpt-4o": 8_000,
+    "gpt-4o-mini": 8_000,
+    "gpt-5": 4_000,
+    "gpt-5-mini": 4_000,
+    "gpt-5-nano": 4_000,
+}
+_DEFAULT_INPUT_LIMIT = 8_000  # conservative fallback
+
+# Output token caps per model on GitHub Models.
+_MODEL_OUTPUT_LIMITS: dict[str, int] = {
+    "gpt-4o": 4_000,
+    "gpt-4o-mini": 4_000,
+    "gpt-5": 4_000,
+    "gpt-5-mini": 4_000,
+    "gpt-5-nano": 4_000,
+}
+_DEFAULT_OUTPUT_LIMIT = 4_000
+
+
+def _effective_max_output_tokens() -> int:
+    """Return the lower of the user-configured MAX_TOKENS and the model cap."""
+    if LLM_PROVIDER == "azure":
+        return MAX_TOKENS  # Azure Foundry uses full model limits
+    model_cap = _MODEL_OUTPUT_LIMITS.get(REVIEWER_MODEL, _DEFAULT_OUTPUT_LIMIT)
+    return min(MAX_TOKENS, model_cap)
+
+
+def _input_char_budget() -> int:
+    """Calculate character budget for the user message."""
+    if LLM_PROVIDER == "azure":
+        # Azure Foundry has generous context windows; allow up to ~25K tokens
+        return 100_000  # ~25K tokens worth of chars
+    input_limit = _MODEL_INPUT_LIMITS.get(REVIEWER_MODEL, _DEFAULT_INPUT_LIMIT)
+    # Reserve ~400 tokens for system prompt + message scaffolding
+    available = max(input_limit - 400, 500)
+    return available * 4  # 1 token ~ 4 chars
 
 
 def _truncate(text: str, budget: int) -> str:
@@ -59,10 +98,11 @@ def _truncate(text: str, budget: int) -> str:
 
 
 def _build_review_message(commit: CommitInfo, lint: str, fmt: str) -> str:
+    budget = _input_char_budget()
     # Allocate char budget: 70 % diff, 15 % lint, 15 % format
-    diff_budget = int(_INPUT_CHAR_BUDGET * 0.70)
-    lint_budget = int(_INPUT_CHAR_BUDGET * 0.15)
-    fmt_budget = int(_INPUT_CHAR_BUDGET * 0.15)
+    diff_budget = int(budget * 0.70)
+    lint_budget = int(budget * 0.15)
+    fmt_budget = int(budget * 0.15)
 
     return f"""\
 ## Commit `{commit.sha[:10]}` — {commit.message}
@@ -91,6 +131,27 @@ Please review this commit.
 
 def _build_model_client() -> OpenAIChatCompletionClient:
     """Create the model client based on LLM_PROVIDER."""
+    if LLM_PROVIDER == "azure":
+        if not AZURE_API_KEY or not AZURE_ENDPOINT:
+            raise RuntimeError(
+                "AZURE_ENDPOINT and AZURE_API_KEY must be set in .env "
+                "when LLM_PROVIDER=azure."
+            )
+        base = AZURE_ENDPOINT.rstrip("/")
+        return OpenAIChatCompletionClient(
+            model=REVIEWER_MODEL,
+            api_key=AZURE_API_KEY,
+            base_url=f"{base}/openai/v1",
+            max_tokens=_effective_max_output_tokens(),
+            model_info={
+                "vision": False,
+                "function_calling": True,
+                "json_output": True,
+                "family": "unknown",
+                "structured_output": True,
+            },
+        )
+
     if LLM_PROVIDER == "github":
         if not GITHUB_TOKEN:
             raise RuntimeError(
@@ -101,7 +162,7 @@ def _build_model_client() -> OpenAIChatCompletionClient:
             model=REVIEWER_MODEL,
             api_key=GITHUB_TOKEN,
             base_url=GITHUB_MODELS_BASE_URL,
-            max_tokens=MAX_TOKENS,
+            max_tokens=_effective_max_output_tokens(),
         )
 
     # Default: OpenAI
@@ -113,7 +174,7 @@ def _build_model_client() -> OpenAIChatCompletionClient:
     return OpenAIChatCompletionClient(
         model=REVIEWER_MODEL,
         api_key=OPENAI_API_KEY,
-        max_tokens=MAX_TOKENS,
+        max_tokens=_effective_max_output_tokens(),
     )
 
 

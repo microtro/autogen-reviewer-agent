@@ -9,14 +9,19 @@ from dotenv import load_dotenv
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
-# LLM provider: "github" (Copilot / GitHub Models) or "openai"
-LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "github")
+# LLM provider: "azure" (Azure AI Foundry), "github" (GitHub Models), or "openai"
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "azure")
 
 # For provider="github": your GitHub PAT (with Copilot access)
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
 # For provider="openai": your OpenAI API key
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+# For provider="azure": Azure AI Foundry / Azure OpenAI settings
+AZURE_ENDPOINT: str = os.getenv("AZURE_ENDPOINT", "")
+AZURE_API_KEY: str = os.getenv("AZURE_API_KEY", "")
+AZURE_API_VERSION: str = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
 
 REVIEWER_MODEL: str = os.getenv("REVIEWER_MODEL", "gpt-5")
 MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
