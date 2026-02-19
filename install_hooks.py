@@ -28,7 +28,11 @@ MARKER = "# REVIEWER_AGENT_HOOK"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 TEMPLATE = PROJECT_ROOT / "hooks" / "post-commit.template"
-PYTHON_BIN = PROJECT_ROOT / ".venv" / "bin" / "python"
+
+if sys.platform == "win32":
+    PYTHON_BIN = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+else:
+    PYTHON_BIN = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 
 def find_repos(scan_dir: Path) -> list[Path]:
@@ -47,17 +51,17 @@ def install_hook(repo: Path) -> None:
 
     # Don't clobber an existing non-reviewer hook
     if hook_path.exists():
-        content = hook_path.read_text()
+        content = hook_path.read_text(encoding="utf-8")
         if MARKER in content:
             print(f"  ↻ Hook already installed in {repo}")
             return
         # Append to the existing hook
         print(f"  ⊕ Appending reviewer hook to existing {HOOK_NAME} in {repo}")
-        with hook_path.open("a") as fh:
+        with hook_path.open("a", encoding="utf-8") as fh:
             fh.write("\n" + _rendered_hook() + "\n")
     else:
         print(f"  ✓ Installing {HOOK_NAME} hook in {repo}")
-        hook_path.write_text("#!/usr/bin/env bash\n" + MARKER + "\n" + _rendered_hook() + "\n")
+        hook_path.write_text("#!/usr/bin/env bash\n" + MARKER + "\n" + _rendered_hook() + "\n", encoding="utf-8")
 
     # Make executable
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -68,7 +72,7 @@ def uninstall_hook(repo: Path) -> None:
     if not hook_path.exists():
         print(f"  - No {HOOK_NAME} hook in {repo}")
         return
-    content = hook_path.read_text()
+    content = hook_path.read_text(encoding="utf-8")
     if MARKER not in content:
         print(f"  - Hook in {repo} was not installed by reviewer_agent, skipping")
         return
@@ -77,7 +81,7 @@ def uninstall_hook(repo: Path) -> None:
 
 
 def _rendered_hook() -> str:
-    template = TEMPLATE.read_text()
+    template = TEMPLATE.read_text(encoding="utf-8")
     return (
         template
         .replace("{{REVIEWER_AGENT_DIR}}", str(PROJECT_ROOT))
