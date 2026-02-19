@@ -16,10 +16,12 @@ from pathlib import Path
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.conditions import MaxMessageTermination
 from autogen_agentchat.teams import RoundRobinGroupChat
-from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_ext.models.openai import AzureOpenAIChatCompletionClient, OpenAIChatCompletionClient
 
 from .config import (
     AZURE_API_KEY,
+    AZURE_API_VERSION,
+    AZURE_AUTH_METHOD,
     AZURE_ENDPOINT,
     GITHUB_MODELS_BASE_URL,
     GITHUB_TOKEN,
@@ -189,25 +191,52 @@ Please review this commit.
 def _build_model_client() -> OpenAIChatCompletionClient:
     """Create the model client based on LLM_PROVIDER."""
     if LLM_PROVIDER == "azure":
-        if not AZURE_API_KEY or not AZURE_ENDPOINT:
+        if not AZURE_ENDPOINT:
             raise RuntimeError(
-                "AZURE_ENDPOINT and AZURE_API_KEY must be set in .env "
-                "when LLM_PROVIDER=azure."
+                "AZURE_ENDPOINT must be set in .env when LLM_PROVIDER=azure."
             )
-        base = AZURE_ENDPOINT.rstrip("/")
-        return OpenAIChatCompletionClient(
-            model=REVIEWER_MODEL,
-            api_key=AZURE_API_KEY,
-            base_url=f"{base}/openai/v1",
-            max_completion_tokens=_effective_max_output_tokens(),
-            model_info={
-                "vision": False,
-                "function_calling": True,
-                "json_output": True,
-                "family": "unknown",
-                "structured_output": True,
-            },
-        )
+
+        _model_info = {
+            "vision": False,
+            "function_calling": True,
+            "json_output": True,
+            "family": "unknown",
+            "structured_output": True,
+        }
+
+        if AZURE_AUTH_METHOD == "cli":
+            # Use Azure CLI / DefaultAzureCredential (no API key needed)
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider  # type: ignore[import-untyped]
+
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            return AzureOpenAIChatCompletionClient(
+                azure_deployment=REVIEWER_MODEL,
+                model=REVIEWER_MODEL,
+                azure_endpoint=AZURE_ENDPOINT,
+                azure_ad_token_provider=token_provider,
+                api_version=AZURE_API_VERSION,
+                max_tokens=_effective_max_output_tokens(),
+                model_info=_model_info,
+            )
+        else:
+            # Key-based auth
+            if not AZURE_API_KEY:
+                raise RuntimeError(
+                    "AZURE_API_KEY must be set in .env "
+                    "when LLM_PROVIDER=azure and AZURE_AUTH_METHOD=key."
+                )
+            return AzureOpenAIChatCompletionClient(
+                azure_deployment=REVIEWER_MODEL,
+                model=REVIEWER_MODEL,
+                azure_endpoint=AZURE_ENDPOINT,
+                api_key=AZURE_API_KEY,
+                api_version=AZURE_API_VERSION,
+                max_tokens=_effective_max_output_tokens(),
+                model_info=_model_info,
+            )
 
     if LLM_PROVIDER == "github":
         if not GITHUB_TOKEN:
@@ -283,9 +312,15 @@ async def run_review(repo_path: str) -> str:
 
 def main() -> None:
     """CLI entry-point: ``python -m reviewer.agent <repo_path>``."""
+    # On Windows the console often uses cp1252 which can't render emoji/Unicode.
+    # Reconfigure stdout/stderr to replace unencodable chars instead of crashing.
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stdout.reconfigure(errors="replace")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(errors="replace")  # type: ignore[attr-defined]
+
     repo_path = sys.argv[1] if len(sys.argv) > 1 else "."
     repo_path = str(Path(repo_path).resolve())
-    print(f"🔍 Reviewing latest commit in {repo_path} …\n")
+    print(f"Reviewing latest commit in {repo_path} ...\n")
     review = asyncio.run(run_review(repo_path))
     print(review)
 

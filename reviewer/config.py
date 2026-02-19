@@ -22,6 +22,8 @@ OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 AZURE_ENDPOINT: str = os.getenv("AZURE_ENDPOINT", "")
 AZURE_API_KEY: str = os.getenv("AZURE_API_KEY", "")
 AZURE_API_VERSION: str = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
+# "key" = use AZURE_API_KEY, "cli" = use Azure CLI / DefaultAzureCredential
+AZURE_AUTH_METHOD: str = os.getenv("AZURE_AUTH_METHOD", "cli")
 
 REVIEWER_MODEL: str = os.getenv("REVIEWER_MODEL", "gpt-5")
 MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
